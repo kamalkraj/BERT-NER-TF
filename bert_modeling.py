@@ -24,7 +24,7 @@ import math
 import six
 import tensorflow as tf
 
-from official.modeling import tf_utils
+from utils import tf_utils
 
 
 class BertConfig(object):

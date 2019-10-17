@@ -1,0 +1,8 @@
+tensorflow-gpu==2.0
+# metrics
+seqeval==0.0.5
+# tokeniztion
+nltk==3.4.5
+# for rest api
+Flask==1.1.1
+Flask-Cors==3.0.8

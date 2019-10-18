@@ -7,19 +7,25 @@ import logging
 import os
 import random
 import sys
+import math
 
 import numpy as np
 import tensorflow as tf
+from fastprogress import master_bar, progress_bar
 from seqeval.metrics import classification_report
+from tqdm import tqdm
 
 from model import BertNer
 from optimization import create_optimizer
 from tokenization import FullTokenizer
 
-logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                    datefmt = '%m/%d/%Y %H:%M:%S',
-                    level = logging.INFO)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                    datefmt='%m/%d/%Y %H:%M:%S',
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
 
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
@@ -41,6 +47,7 @@ class InputExample(object):
         self.text_b = text_b
         self.label = label
 
+
 class InputFeatures(object):
     """A single set of features of data."""
 
@@ -52,6 +59,7 @@ class InputFeatures(object):
         self.valid_ids = valid_ids
         self.label_mask = label_mask
 
+
 def readfile(filename):
     '''
     read file
@@ -59,11 +67,11 @@ def readfile(filename):
     f = open(filename)
     data = []
     sentence = []
-    label= []
+    label = []
     for line in f:
-        if len(line)==0 or line.startswith('-DOCSTART') or line[0]=="\n":
+        if len(line) == 0 or line.startswith('-DOCSTART') or line[0] == "\n":
             if len(sentence) > 0:
-                data.append((sentence,label))
+                data.append((sentence, label))
                 sentence = []
                 label = []
             continue
@@ -71,11 +79,12 @@ def readfile(filename):
         sentence.append(splits[0])
         label.append(splits[-1][:-1])
 
-    if len(sentence) >0:
-        data.append((sentence,label))
+    if len(sentence) > 0:
+        data.append((sentence, label))
         sentence = []
         label = []
     return data
+
 
 class DataProcessor(object):
     """Base class for data converters for sequence classification data sets."""
@@ -119,23 +128,25 @@ class NerProcessor(DataProcessor):
     def get_labels(self):
         return ["O", "B-MISC", "I-MISC",  "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC", "[CLS]", "[SEP]"]
 
-    def _create_examples(self,lines,set_type):
+    def _create_examples(self, lines, set_type):
         examples = []
-        for i,(sentence,label) in enumerate(lines):
+        for i, (sentence, label) in enumerate(lines):
             guid = "%s-%s" % (set_type, i)
             text_a = ' '.join(sentence)
             text_b = None
             label = label
-            examples.append(InputExample(guid=guid,text_a=text_a,text_b=text_b,label=label))
+            examples.append(InputExample(
+                guid=guid, text_a=text_a, text_b=text_b, label=label))
         return examples
+
 
 def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer):
     """Loads a data file into a list of `InputBatch`s."""
 
-    label_map = {label : i for i, label in enumerate(label_list,1)}
+    label_map = {label: i for i, label in enumerate(label_list, 1)}
 
     features = []
-    for (ex_index,example) in enumerate(examples):
+    for (ex_index, example) in enumerate(examples):
         textlist = example.text_a.split(' ')
         labellist = example.label
         tokens = []
@@ -163,8 +174,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         label_ids = []
         ntokens.append("[CLS]")
         segment_ids.append(0)
-        valid.insert(0,1)
-        label_mask.insert(0,1)
+        valid.insert(0, 1)
+        label_mask.insert(0, 1)
         label_ids.append(label_map["[CLS]"])
         for i, token in enumerate(tokens):
             ntokens.append(token)
@@ -200,25 +211,28 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
             logger.info("tokens: %s" % " ".join(
-                    [str(x) for x in tokens]))
-            logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
-            logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
+                [str(x) for x in tokens]))
+            logger.info("input_ids: %s" %
+                        " ".join([str(x) for x in input_ids]))
+            logger.info("input_mask: %s" %
+                        " ".join([str(x) for x in input_mask]))
             logger.info(
-                    "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+                "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
 
         features.append(
-                InputFeatures(input_ids=input_ids,
-                              input_mask=input_mask,
-                              segment_ids=segment_ids,
-                              label_id=label_ids,
-                              valid_ids=valid,
-                              label_mask=label_mask))
+            InputFeatures(input_ids=input_ids,
+                          input_mask=input_mask,
+                          segment_ids=segment_ids,
+                          label_id=label_ids,
+                          valid_ids=valid,
+                          label_mask=label_mask))
     return features
+
 
 def main():
     parser = argparse.ArgumentParser()
 
-    ## Required parameters
+    # Required parameters
     parser.add_argument("--data_dir",
                         default=None,
                         type=str,
@@ -232,7 +246,7 @@ def main():
                         required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
 
-    ## Other parameters
+    # Other parameters
     parser.add_argument("--max_seq_length",
                         default=128,
                         type=int,
@@ -253,7 +267,7 @@ def main():
                         type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size",
-                        default=8,
+                        default=64,
                         type=int,
                         help="Total batch size for eval.")
     parser.add_argument("--learning_rate",
@@ -261,8 +275,8 @@ def main():
                         type=float,
                         help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs",
-                        default=3.0,
-                        type=float,
+                        default=3,
+                        type=int,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--warmup_proportion",
                         default=0.1,
@@ -280,22 +294,26 @@ def main():
     label_list = processor.get_labels()
     num_labels = len(label_list) + 1
 
-    tokenizer = FullTokenizer(os.path.join(args.bert_model,"vocab.txt"),args.do_lower_case)
+    tokenizer = FullTokenizer(os.path.join(
+        args.bert_model, "vocab.txt"), args.do_lower_case)
 
     train_examples = None
+    optimizer = None
     num_train_optimization_steps = 0
     if args.do_train:
         train_examples = processor.get_train_examples(args.data_dir)
-        num_train_optimization_steps = int(len(train_examples) / args.train_batch_size ) * args.num_train_epochs
-        warmup_steps = int(args.warmup_proportion * num_train_optimization_steps)
-    
-    ner = BertNer(args.bert_model,tf.float32,num_labels,args.max_seq_length)
+        num_train_optimization_steps = int(
+            len(train_examples) / args.train_batch_size) * args.num_train_epochs
+        warmup_steps = int(args.warmup_proportion *
+                           num_train_optimization_steps)
+        optimizer = create_optimizer(args.learning_rate, num_train_optimization_steps, warmup_steps)
 
-    optimizer = create_optimizer(args.learning_rate,num_train_optimization_steps,warmup_steps)
+    ner = BertNer(args.bert_model, tf.float32, num_labels, args.max_seq_length)
 
-    ner.compile(optimizer,loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True))
 
-    label_map = {i : label for i, label in enumerate(label_list,1)}
+    loss_fct = tf.keras.losses.SparseCategoricalCrossentropy()
+
+    label_map = {i: label for i, label in enumerate(label_list, 1)}
     if args.do_train:
         train_features = convert_examples_to_features(
             train_examples, label_list, args.max_seq_length, tokenizer)
@@ -303,21 +321,93 @@ def main():
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
-        
-        all_input_ids = np.asarray([f.input_ids for f in train_features])
-        all_input_mask = np.asarray([f.input_mask for f in train_features])
-        all_segment_ids = np.asarray([f.segment_ids for f in train_features])
-        all_valid_ids = np.asarray([f.valid_ids for f in train_features])
 
-        y_train = np.asarray([f.label_id for f in train_features])
+        all_input_ids = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.input_ids for f in train_features]))
+        all_input_mask = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.input_mask for f in train_features]))
+        all_segment_ids = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.segment_ids for f in train_features]))
+        all_valid_ids = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.valid_ids for f in train_features]))
 
-        # x_train = np.asarray([[np.asarray(f.input_ids),np.asarray(f.input_mask),np.asarray(f.segment_ids),np.asarray(f.valid_ids)] for f in train_features])
-        x_train = np.asarray([all_input_ids,all_input_mask,all_segment_ids,all_valid_ids])
+        all_label_ids = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.label_id for f in train_features]))
 
-        # out = ner([np.asarray([all_input_ids[0]]),np.asarray([all_input_mask[0]]),np.asarray([all_segment_ids[0]]),np.asarray([all_valid_ids[0]])])
+        train_data = tf.data.Dataset.zip(
+            (all_input_ids, all_input_mask, all_segment_ids, all_valid_ids, all_label_ids))
+        batched_train_data = train_data.batch(args.train_batch_size)
 
-        ner.fit(x=x_train,y=y_train,batch_size=args.train_batch_size,
-                                epochs=args.num_train_epochs)
+        loss_metric = tf.keras.metrics.Mean()
+        # import ipdb; ipdb.set_trace()
+        epoch_bar = master_bar(range(args.num_train_epochs))
+        pb_max_len = math.ceil(
+            float(len(train_features))/float(args.train_batch_size))
+
+        for epoch in epoch_bar:
+            for (input_ids, input_mask, segment_ids, valid_ids, label_ids) in progress_bar(batched_train_data, total=pb_max_len, parent=epoch_bar):
+                with tf.GradientTape() as tape:
+                    logits = ner(input_ids, input_mask,
+                                 segment_ids, valid_ids, training=True)
+                    loss = loss_fct(label_ids, logits)
+                grads = tape.gradient(loss, ner.trainable_weights)
+                optimizer.apply_gradients(zip(grads, ner.trainable_weights))
+                loss_metric(loss)
+                epoch_bar.child.comment = f'loss : {loss_metric.result()}'
+        ner.save_weights("model.h5")
+
+    if args.do_eval:
+        eval_examples = processor.get_test_examples(args.data_dir)
+        eval_features = convert_examples_to_features(
+            eval_examples, label_list, args.max_seq_length, tokenizer)
+        logger.info("***** Running evalution *****")
+        logger.info("  Num examples = %d", len(eval_examples))
+        logger.info("  Batch size = %d", args.eval_batch_size)
+
+        all_input_ids = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.input_ids for f in eval_features]))
+        all_input_mask = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.input_mask for f in eval_features]))
+        all_segment_ids = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.segment_ids for f in eval_features]))
+        all_valid_ids = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.valid_ids for f in eval_features]))
+
+        all_label_ids = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.label_id for f in eval_features]))
+
+        eval_data = tf.data.Dataset.zip(
+            (all_input_ids, all_input_mask, all_segment_ids, all_valid_ids, all_label_ids))
+        batched_eval_data = eval_data.batch(args.train_batch_size)
+
+        loss_metric = tf.keras.metrics.Mean()
+        epoch_bar = master_bar(range(1))
+        pb_max_len = math.ceil(
+            float(len(eval_features))/float(args.eval_batch_size))
+
+        y_true = []
+        y_pred = []
+        label_map = {i : label for i, label in enumerate(label_list,1)}
+        for epoch in epoch_bar:
+            for (input_ids, input_mask, segment_ids, valid_ids, label_ids) in progress_bar(batched_eval_data, total=pb_max_len, parent=epoch_bar):
+                    logits = ner(input_ids, input_mask,
+                                 segment_ids, valid_ids, training=False)
+                    logits = tf.argmax(logits,axis=2)
+                    for i, label in enumerate(label_ids):
+                        temp_1 = []
+                        temp_2 = []
+                        for j,m in enumerate(label):
+                            if j == 0:
+                                continue
+                            elif label_ids[i][j] == len(label_map):
+                                y_true.append(temp_1)
+                                y_pred.append(temp_2)
+                                break
+                            else:
+                                temp_1.append(label_map[label_ids[i][j].numpy()])
+                                temp_2.append(label_map.get(logits[i][j].numpy(),'O'))
+            report = classification_report(y_true, y_pred,digits=4)
+            logger.info("\n%s", report)        
 
 if __name__ == "__main__":
     main()

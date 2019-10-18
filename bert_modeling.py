@@ -196,7 +196,7 @@ class BertModel(tf.keras.layers.Layer):
     inputs = tf_utils.pack_inputs([input_word_ids, input_mask, input_type_ids])
     return super(BertModel, self).__call__(inputs, **kwargs)
 
-  def call(self, inputs, mode="bert"):
+  def call(self, inputs, mode="bert", **kwargs):
     """Implements call() for the layer.
 
     Args:
@@ -328,7 +328,7 @@ class EmbeddingPostprocessor(tf.keras.layers.Layer):
     inputs = tf_utils.pack_inputs([word_embeddings, token_type_ids])
     return super(EmbeddingPostprocessor, self).__call__(inputs, **kwargs)
 
-  def call(self, inputs):
+  def call(self, inputs, **kwargs):
     """Implements call() for the layer."""
     unpacked_inputs = tf_utils.unpack_inputs(inputs)
     word_embeddings = unpacked_inputs[0]
@@ -358,7 +358,7 @@ class EmbeddingPostprocessor(tf.keras.layers.Layer):
       output += position_embeddings
 
     output = self.output_layer_norm(output)
-    output = self.output_dropout(output)
+    output = self.output_dropout(output,training=kwargs.get('training', False))
 
     return output
 
@@ -434,7 +434,7 @@ class Attention(tf.keras.layers.Layer):
     inputs = tf_utils.pack_inputs([from_tensor, to_tensor, attention_mask])
     return super(Attention, self).__call__(inputs, **kwargs)
 
-  def call(self, inputs):
+  def call(self, inputs,**kwargs):
     """Implements call() for the layer."""
     (from_tensor, to_tensor, attention_mask) = tf_utils.unpack_inputs(inputs)
 
@@ -478,7 +478,7 @@ class Attention(tf.keras.layers.Layer):
 
     # This is actually dropping out entire tokens to attend to, which might
     # seem a bit unusual, but is taken from the original Transformer paper.
-    attention_probs = self.attention_probs_dropout(attention_probs)
+    attention_probs = self.attention_probs_dropout(attention_probs,training=kwargs.get('training', False))
 
     # `context_layer` = [B, F, N, H]
     context_tensor = tf.einsum("BNFT,BTNH->BFNH", attention_probs, value_tensor)
@@ -777,19 +777,19 @@ class TransformerBlock(tf.keras.layers.Layer):
         self.output_layer_norm
     ]
 
-  def __call__(self, input_tensor, attention_mask=None):
+  def __call__(self, input_tensor, attention_mask=None, **kwargs):
     inputs = tf_utils.pack_inputs([input_tensor, attention_mask])
-    return super(TransformerBlock, self).__call__(inputs)
+    return super(TransformerBlock, self).__call__(inputs, **kwargs)
 
-  def call(self, inputs):
+  def call(self, inputs, **kwargs):
     """Implements call() for the layer."""
     (input_tensor, attention_mask) = tf_utils.unpack_inputs(inputs)
     attention_output = self.attention_layer(
         from_tensor=input_tensor,
         to_tensor=input_tensor,
-        attention_mask=attention_mask)
+        attention_mask=attention_mask,**kwargs)
     attention_output = self.attention_output_dense(attention_output)
-    attention_output = self.attention_dropout(attention_output)
+    attention_output = self.attention_dropout(attention_output,training=kwargs.get('training', False))
     # Use float32 in keras layer norm and the gelu activation in the
     # intermediate dense layer for numeric stability
     attention_output = self.attention_layer_norm(input_tensor +
@@ -800,7 +800,7 @@ class TransformerBlock(tf.keras.layers.Layer):
     if self.float_type == tf.float16:
       intermediate_output = tf.cast(intermediate_output, tf.float16)
     layer_output = self.output_dense(intermediate_output)
-    layer_output = self.output_dropout(layer_output)
+    layer_output = self.output_dropout(layer_output,training=kwargs.get('training', False))
     # Use float32 in keras layer norm for numeric stability
     layer_output = self.output_layer_norm(layer_output + attention_output)
     if self.float_type == tf.float16:
@@ -867,7 +867,7 @@ class Transformer(tf.keras.layers.Layer):
     inputs = tf_utils.pack_inputs([input_tensor, attention_mask])
     return super(Transformer, self).__call__(inputs=inputs, **kwargs)
 
-  def call(self, inputs, return_all_layers=False):
+  def call(self, inputs, return_all_layers=False, **kwargs):
     """Implements call() for the layer.
 
     Args:
@@ -884,7 +884,7 @@ class Transformer(tf.keras.layers.Layer):
 
     all_layer_outputs = []
     for layer in self.layers:
-      output_tensor = layer(output_tensor, attention_mask)
+      output_tensor = layer(output_tensor, attention_mask,**kwargs)
       all_layer_outputs.append(output_tensor)
 
     if return_all_layers:

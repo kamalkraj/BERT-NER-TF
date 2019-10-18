@@ -27,22 +27,9 @@ class BertNer(tf.keras.Model):
         self.classifier = tf.keras.layers.Dense(
             num_labels, kernel_initializer=initializer, activation='softmax',name='output', dtype=float_type)
     
-    # def __call__(self,
-    #            input_word_ids,
-    #            input_mask=None,
-    #            input_type_ids=None,
-    #            valid_mask=None,
-    #            **kwargs):
-    #     inputs = tf_utils.pack_inputs([input_word_ids, input_mask, input_type_ids, valid_mask])
-    #     return super(BertNer, self).__call__(inputs, **kwargs)
-    
-    def call(self, inputs, **kwargs):
-        # unpacked_inputs = tf_utils.unpack_inputs(inputs)
-        input_word_ids = inputs[0]
-        input_mask = inputs[1]
-        input_type_ids = inputs[2]
-        valid_mask = inputs[3]
-        _, sequence_output = self.bert(input_word_ids, input_mask, input_type_ids)
+
+    def call(self, input_word_ids,input_mask=None,input_type_ids=None,valid_mask=None, **kwargs):
+        _, sequence_output = self.bert(input_word_ids, input_mask, input_type_ids, **kwargs)
         valid_output = []
         for i in range(sequence_output.shape[0]):
             r = 0

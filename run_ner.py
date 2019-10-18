@@ -311,10 +311,10 @@ def main():
 
         y_train = np.asarray([f.label_id for f in train_features])
 
-        # x_train = np.asarray([[f.input_ids,f.input_mask,f.segment_ids,f.valid_ids] for f in train_features])
-        # import ipdb; ipdb.set_trace()
-        ner([np.asarray([all_input_ids[0]]),np.asarray([all_input_mask[0]]),np.asarray([all_segment_ids[0]]),np.asarray([all_valid_ids[0]])])
-        x_train = np.expand_dims(x_train,2)
+        # x_train = np.asarray([[np.asarray(f.input_ids),np.asarray(f.input_mask),np.asarray(f.segment_ids),np.asarray(f.valid_ids)] for f in train_features])
+        x_train = np.asarray([all_input_ids,all_input_mask,all_segment_ids,all_valid_ids])
+
+        # out = ner([np.asarray([all_input_ids[0]]),np.asarray([all_input_mask[0]]),np.asarray([all_segment_ids[0]]),np.asarray([all_valid_ids[0]])])
 
         ner.fit(x=x_train,y=y_train,batch_size=args.train_batch_size,
                                 epochs=args.num_train_epochs)

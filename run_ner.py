@@ -402,10 +402,12 @@ def main():
         _ = ner(ids,ids,ids,ids, training=False)
         ner.load_weights(os.path.join(args.output_dir,"model.h5"))
 
+        # load test or development set based on args
         if args.eval_on == "dev":
             eval_examples = processor.get_dev_examples(args.data_dir)
         elif args.eval_on == "test":
             eval_examples = processor.get_test_examples(args.data_dir)
+        
         eval_features = convert_examples_to_features(
             eval_examples, label_list, args.max_seq_length, tokenizer)
         logger.info("***** Running evalution *****")

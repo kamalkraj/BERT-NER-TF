@@ -108,3 +108,4 @@ venv.bak/
 
 # weights
 bert-*/
+*.h5

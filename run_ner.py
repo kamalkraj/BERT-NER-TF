@@ -383,7 +383,6 @@ def main():
                 optimizer.apply_gradients(zip(grads, ner.trainable_weights))
                 loss_metric(loss)
                 epoch_bar.child.comment = f'loss : {loss_metric.result()}'
-                break
             loss_metric.reset_states()
         # model weight save 
         ner.save_weights(os.path.join(args.output_dir,"model.h5"))

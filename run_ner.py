@@ -4,10 +4,11 @@ import argparse
 import csv
 import json
 import logging
+import math
 import os
 import random
+import shutil
 import sys
-import math
 
 import numpy as np
 import tensorflow as tf
@@ -16,7 +17,7 @@ from seqeval.metrics import classification_report
 from tqdm import tqdm
 
 from model import BertNer
-from optimization import create_optimizer
+from optimization import AdamWeightDecay, WarmUp
 from tokenization import FullTokenizer
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -258,7 +259,11 @@ def main():
                         help="Whether to run training.")
     parser.add_argument("--do_eval",
                         action='store_true',
-                        help="Whether to run eval on the dev set.")
+                        help="Whether to run eval on the dev/test set.")
+    parser.add_argument("--eval_on",
+                        default="dev",
+                        type=str,
+                        help="Evaluation set, dev: Development, test: Test")
     parser.add_argument("--do_lower_case",
                         action='store_true',
                         help="Set this flag if you are using an uncased model.")
@@ -294,21 +299,39 @@ def main():
     label_list = processor.get_labels()
     num_labels = len(label_list) + 1
 
-    tokenizer = FullTokenizer(os.path.join(
-        args.bert_model, "vocab.txt"), args.do_lower_case)
+    if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train:
+        raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+    
+    if args.do_train:
+        tokenizer = FullTokenizer(os.path.join(args.bert_model, "vocab.txt"), args.do_lower_case)
 
     train_examples = None
     optimizer = None
     num_train_optimization_steps = 0
+    ner = None
     if args.do_train:
         train_examples = processor.get_train_examples(args.data_dir)
         num_train_optimization_steps = int(
             len(train_examples) / args.train_batch_size) * args.num_train_epochs
         warmup_steps = int(args.warmup_proportion *
                            num_train_optimization_steps)
-        optimizer = create_optimizer(args.learning_rate, num_train_optimization_steps, warmup_steps)
+        learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(initial_learning_rate=args.learning_rate,
+                                                decay_steps=num_train_optimization_steps,end_learning_rate=0.0)
+        if warmup_steps:
+            learning_rate_fn = WarmUp(initial_learning_rate=args.learning_rate,
+                                    decay_schedule_fn=learning_rate_fn,
+                                    warmup_steps=warmup_steps)
+        optimizer = AdamWeightDecay(
+            learning_rate=learning_rate_fn,
+            weight_decay_rate=0.01,
+            beta_1=0.9,
+            beta_2=0.999,
+            epsilon=1e-6,
+            exclude_from_weight_decay=['layer_norm', 'bias'])
 
-    ner = BertNer(args.bert_model, tf.float32, num_labels, args.max_seq_length)
+        ner = BertNer(args.bert_model, tf.float32, num_labels, args.max_seq_length)
 
 
     loss_fct = tf.keras.losses.SparseCategoricalCrossentropy()
@@ -341,11 +364,11 @@ def main():
         batched_train_data = train_data.batch(args.train_batch_size)
 
         loss_metric = tf.keras.metrics.Mean()
-        # import ipdb; ipdb.set_trace()
+
         epoch_bar = master_bar(range(args.num_train_epochs))
         pb_max_len = math.ceil(
             float(len(train_features))/float(args.train_batch_size))
-        # import ipdb; ipdb.set_trace()
+
         for epoch in epoch_bar:
             for (input_ids, input_mask, segment_ids, valid_ids, label_ids,label_mask) in progress_bar(batched_train_data, total=pb_max_len, parent=epoch_bar):
                 with tf.GradientTape() as tape:
@@ -360,16 +383,30 @@ def main():
                 optimizer.apply_gradients(zip(grads, ner.trainable_weights))
                 loss_metric(loss)
                 epoch_bar.child.comment = f'loss : {loss_metric.result()}'
+                break
             loss_metric.reset_states()
-        ner.save_weights("model_large.h5")
+        # model weight save 
+        ner.save_weights(os.path.join(args.output_dir,"model.h5"))
+        # copy vocab to output_dir
+        shutil.copyfile(os.path.join(args.bert_model,"vocab.txt"),os.path.join(args.output_dir,"vocab.txt"))
+        # copy bert config to output_dir
+        shutil.copyfile(os.path.join(args.bert_model,"bert_config.json"),os.path.join(args.output_dir,"bert_config.json"))
         
 
     if args.do_eval:
+        # load tokenizer
+        tokenizer = FullTokenizer(os.path.join(args.output_dir, "vocab.txt"), args.do_lower_case)
         # model build hack : fix
+        config = json.load(open(os.path.join(args.output_dir,"bert_config.json")))
+        ner = BertNer(config, tf.float32, num_labels, args.max_seq_length)
         ids = tf.ones((1,128),dtype=tf.int64)
         _ = ner(ids,ids,ids,ids, training=False)
-        ner.load_weights("model_large.h5")
-        eval_examples = processor.get_test_examples(args.data_dir)
+        ner.load_weights(os.path.join(args.output_dir,"model.h5"))
+
+        if args.eval_on == "dev":
+            eval_examples = processor.get_dev_examples(args.data_dir)
+        elif args.eval_on == "test":
+            eval_examples = processor.get_test_examples(args.data_dir)
         eval_features = convert_examples_to_features(
             eval_examples, label_list, args.max_seq_length, tokenizer)
         logger.info("***** Running evalution *****")

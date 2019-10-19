@@ -402,7 +402,7 @@ def main():
         _ = ner(ids,ids,ids,ids, training=False)
         ner.load_weights(os.path.join(args.output_dir,"model.h5"))
 
-        # load test or development set based on args
+        # load test or development set based on argsK
         if args.eval_on == "dev":
             eval_examples = processor.get_dev_examples(args.data_dir)
         elif args.eval_on == "test":

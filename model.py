@@ -48,7 +48,7 @@ class BertNer(tf.keras.Model):
         self.dropout = tf.keras.layers.Dropout(
             rate=bert_config.hidden_dropout_prob)
         self.classifier = tf.keras.layers.Dense(
-            num_labels, kernel_initializer=initializer, activation=tf.nn.log_softmax,name='output', dtype=float_type)
+            num_labels, kernel_initializer=initializer, activation='softmax',name='output', dtype=float_type)
     
 
     def call(self, input_word_ids,input_mask=None,input_type_ids=None,valid_mask=None, **kwargs):

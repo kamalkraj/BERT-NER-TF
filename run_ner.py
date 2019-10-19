@@ -161,7 +161,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
                 if m == 0:
                     labels.append(label_1)
                     valid.append(1)
-                    label_mask.append(1)
+                    label_mask.append(True)
                 else:
                     valid.append(0)
         if len(tokens) >= max_seq_length - 1:
@@ -175,7 +175,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         ntokens.append("[CLS]")
         segment_ids.append(0)
         valid.insert(0, 1)
-        label_mask.insert(0, 1)
+        label_mask.insert(0, True)
         label_ids.append(label_map["[CLS]"])
         for i, token in enumerate(tokens):
             ntokens.append(token)
@@ -185,21 +185,21 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         ntokens.append("[SEP]")
         segment_ids.append(0)
         valid.append(1)
-        label_mask.append(1)
+        label_mask.append(True)
         label_ids.append(label_map["[SEP]"])
         input_ids = tokenizer.convert_tokens_to_ids(ntokens)
         input_mask = [1] * len(input_ids)
-        label_mask = [1] * len(label_ids)
+        label_mask = [True] * len(label_ids)
         while len(input_ids) < max_seq_length:
             input_ids.append(0)
             input_mask.append(0)
             segment_ids.append(0)
             label_ids.append(0)
             valid.append(1)
-            label_mask.append(0)
+            label_mask.append(False)
         while len(label_ids) < max_seq_length:
             label_ids.append(0)
-            label_mask.append(0)
+            label_mask.append(False)
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
@@ -330,12 +330,14 @@ def main():
             np.asarray([f.segment_ids for f in train_features]))
         all_valid_ids = tf.data.Dataset.from_tensor_slices(
             np.asarray([f.valid_ids for f in train_features]))
+        all_label_mask = tf.data.Dataset.from_tensor_slices(
+            np.asarray([f.label_mask for f in train_features]))
 
         all_label_ids = tf.data.Dataset.from_tensor_slices(
             np.asarray([f.label_id for f in train_features]))
 
         train_data = tf.data.Dataset.zip(
-            (all_input_ids, all_input_mask, all_segment_ids, all_valid_ids, all_label_ids))
+            (all_input_ids, all_input_mask, all_segment_ids, all_valid_ids, all_label_ids,all_label_mask))
         batched_train_data = train_data.batch(args.train_batch_size)
 
         loss_metric = tf.keras.metrics.Mean()
@@ -343,20 +345,30 @@ def main():
         epoch_bar = master_bar(range(args.num_train_epochs))
         pb_max_len = math.ceil(
             float(len(train_features))/float(args.train_batch_size))
-
+        # import ipdb; ipdb.set_trace()
         for epoch in epoch_bar:
-            for (input_ids, input_mask, segment_ids, valid_ids, label_ids) in progress_bar(batched_train_data, total=pb_max_len, parent=epoch_bar):
+            for (input_ids, input_mask, segment_ids, valid_ids, label_ids,label_mask) in progress_bar(batched_train_data, total=pb_max_len, parent=epoch_bar):
                 with tf.GradientTape() as tape:
-                    logits = ner(input_ids, input_mask,
-                                 segment_ids, valid_ids, training=True)
-                    loss = loss_fct(label_ids, logits)
+                    logits = ner(input_ids, input_mask,segment_ids, valid_ids, training=True)
+                    label_mask = tf.reshape(label_mask,(-1,))
+                    logits = tf.reshape(logits,(-1,num_labels))
+                    logits_masked = tf.boolean_mask(logits,label_mask)
+                    label_ids = tf.reshape(label_ids,(-1,))
+                    label_ids_masked = tf.boolean_mask(label_ids,label_mask)
+                    loss = loss_fct(label_ids_masked, logits_masked)
                 grads = tape.gradient(loss, ner.trainable_weights)
                 optimizer.apply_gradients(zip(grads, ner.trainable_weights))
                 loss_metric(loss)
                 epoch_bar.child.comment = f'loss : {loss_metric.result()}'
-        ner.save_weights("model.h5")
+            loss_metric.reset_states()
+        ner.save_weights("model_large.h5")
+        
 
     if args.do_eval:
+        # model build hack : fix
+        ids = tf.ones((1,128),dtype=tf.int64)
+        _ = ner(ids,ids,ids,ids, training=False)
+        ner.load_weights("model_large.h5")
         eval_examples = processor.get_test_examples(args.data_dir)
         eval_features = convert_examples_to_features(
             eval_examples, label_list, args.max_seq_length, tokenizer)

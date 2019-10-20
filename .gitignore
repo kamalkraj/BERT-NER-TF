@@ -109,6 +109,6 @@ venv.bak/
 # weights
 bert-*/
 *.h5
-bert_config.json
-vocab.txt
+*.json
+*.txt
 *.zip

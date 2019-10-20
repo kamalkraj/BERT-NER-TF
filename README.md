@@ -55,7 +55,7 @@ avg / total     0.9440    0.9509    0.9474      5942
 
 avg / total     0.9053    0.9184    0.9117      5648
 ```
-## Pretrained model download from [here]()
+## Pretrained model download from [here](https://drive.google.com/file/d/1ZlQimY5xbkpS_1baO-ZtCZZef4MvG9__/view?usp=sharing)
 
 ## BERT-LARGE
 
@@ -81,7 +81,7 @@ avg / total     0.9513    0.9564    0.9538      5942
 
 avg / total     0.9094    0.9242    0.9167      5648
 ```
-## Pretrained model download from [here]()
+## Pretrained model download from [here](https://drive.google.com/file/d/1BZCKj_e_SXxlvg4rKUC0EI4BJXYssTVL/view?usp=sharing)
 
 # Inference
 

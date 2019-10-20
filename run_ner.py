@@ -14,7 +14,6 @@ import numpy as np
 import tensorflow as tf
 from fastprogress import master_bar, progress_bar
 from seqeval.metrics import classification_report
-from tqdm import tqdm
 
 from model import BertNer
 from optimization import AdamWeightDecay, WarmUp
@@ -292,14 +291,19 @@ def main():
                         help="Weight deay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float,
                         help="Epsilon for Adam optimizer.")
+    parser.add_argument('--seed',
+                        type=int,
+                        default=42,
+                        help="random seed for initialization")
     # training stratergy arguments
     parser.add_argument("--multi_gpu",
                         action='store_true',
-                        help="Set this flag to enable multi-gpu training using MirroredStrategy")
+                        help="Set this flag to enable multi-gpu training using MirroredStrategy."
+                             "Single gpu training")
     parser.add_argument("--gpus",default='0',type=str,
                         help="Comma separated list of gpus devices."
                               "For Single gpu pass the gpu id.Default '0' GPU"
-                              "For Multi gpu not specified all the available gpus will be used")
+                              "For Multi gpu,if gpus not specified all the available gpus will be used")
 
     args = parser.parse_args()
 
@@ -314,6 +318,16 @@ def main():
     
     if args.do_train:
         tokenizer = FullTokenizer(os.path.join(args.bert_model, "vocab.txt"), args.do_lower_case)
+    
+    if args.multi_gpu:
+        if len(args.gpus.split(',')) == 1:
+            strategy = tf.distribute.MirroredStrategy()
+        else:
+            gpus = [f"/gpu:{gpu}" for gpu in args.gpus.split(',')]
+            strategy = tf.distribute.MirroredStrategy(devices=gpus)
+    else:
+        gpu = args.gpus.split(',')[0]
+        strategy = tf.distribute.OneDeviceStrategy(device=f"/gpu:{gpu}")
 
     train_examples = None
     optimizer = None
@@ -339,10 +353,9 @@ def main():
             epsilon=args.adam_epsilon,
             exclude_from_weight_decay=['layer_norm', 'bias'])
 
-        ner = BertNer(args.bert_model, tf.float32, num_labels, args.max_seq_length)
-
-
-    loss_fct = tf.keras.losses.SparseCategoricalCrossentropy()
+        with strategy.scope():
+            ner = BertNer(args.bert_model, tf.float32, num_labels, args.max_seq_length)
+            loss_fct = tf.keras.losses.SparseCategoricalCrossentropy(reduction=tf.keras.losses.Reduction.NONE)
 
     label_map = {i: label for i, label in enumerate(label_list, 1)}
     if args.do_train:
@@ -367,9 +380,15 @@ def main():
         all_label_ids = tf.data.Dataset.from_tensor_slices(
             np.asarray([f.label_id for f in train_features]))
 
+        # Dataset using tf.data
         train_data = tf.data.Dataset.zip(
             (all_input_ids, all_input_mask, all_segment_ids, all_valid_ids, all_label_ids,all_label_mask))
-        batched_train_data = train_data.batch(args.train_batch_size)
+        shuffled_train_data = train_data.shuffle(buffer_size=int(len(train_features) * 0.1),
+                                                seed = args.seed,
+                                                reshuffle_each_iteration=True)
+        batched_train_data = shuffled_train_data.batch(args.train_batch_size)
+        # Distributed dataset
+        dist_dataset = strategy.experimental_distribute_dataset(batched_train_data)
 
         loss_metric = tf.keras.metrics.Mean()
 
@@ -377,8 +396,9 @@ def main():
         pb_max_len = math.ceil(
             float(len(train_features))/float(args.train_batch_size))
 
-        for epoch in epoch_bar:
-            for (input_ids, input_mask, segment_ids, valid_ids, label_ids,label_mask) in progress_bar(batched_train_data, total=pb_max_len, parent=epoch_bar):
+        def train_step(input_ids, input_mask, segment_ids, valid_ids, label_ids,label_mask):
+            def step_fn(input_ids, input_mask, segment_ids, valid_ids, label_ids,label_mask):
+
                 with tf.GradientTape() as tape:
                     logits = ner(input_ids, input_mask,segment_ids, valid_ids, training=True)
                     label_mask = tf.reshape(label_mask,(-1,))
@@ -386,12 +406,25 @@ def main():
                     logits_masked = tf.boolean_mask(logits,label_mask)
                     label_ids = tf.reshape(label_ids,(-1,))
                     label_ids_masked = tf.boolean_mask(label_ids,label_mask)
-                    loss = loss_fct(label_ids_masked, logits_masked)
-                grads = tape.gradient(loss, ner.trainable_weights)
-                optimizer.apply_gradients(zip(grads, ner.trainable_weights))
-                loss_metric(loss)
-                epoch_bar.child.comment = f'loss : {loss_metric.result()}'
+                    cross_entropy = loss_fct(label_ids_masked, logits_masked)
+                    loss = tf.reduce_sum(cross_entropy) * (1.0 / args.train_batch_size)
+                grads = tape.gradient(loss, ner.trainable_variables)
+                optimizer.apply_gradients(list(zip(grads, ner.trainable_variables)))
+                return cross_entropy
+
+            per_example_losses = strategy.experimental_run_v2(step_fn,
+                                     args=(input_ids, input_mask, segment_ids, valid_ids, label_ids,label_mask))
+            mean_loss = strategy.reduce(tf.distribute.ReduceOp.MEAN, per_example_losses, axis=0)
+            return mean_loss
+
+        for epoch in epoch_bar:
+            with strategy.scope():
+                for (input_ids, input_mask, segment_ids, valid_ids, label_ids,label_mask) in progress_bar(dist_dataset, total=pb_max_len, parent=epoch_bar):
+                    loss = train_step(input_ids, input_mask, segment_ids, valid_ids, label_ids,label_mask)
+                    loss_metric(loss)
+                    epoch_bar.child.comment = f'loss : {loss_metric.result()}'
             loss_metric.reset_states()
+        
         # model weight save 
         ner.save_weights(os.path.join(args.output_dir,"model.h5"))
         # copy vocab to output_dir
@@ -402,7 +435,7 @@ def main():
         model_config = {"bert_model":args.bert_model,"do_lower":args.do_lower_case,
                         "max_seq_length":args.max_seq_length,"num_labels":num_labels,
                         "label_map":label_map}
-        json.dump(model_config,open(os.path.join(args.output_dir,"model_config.json"),"w"))
+        json.dump(model_config,open(os.path.join(args.output_dir,"model_config.json"),"w"),indent=4)
         
 
     if args.do_eval:
@@ -441,7 +474,7 @@ def main():
 
         eval_data = tf.data.Dataset.zip(
             (all_input_ids, all_input_mask, all_segment_ids, all_valid_ids, all_label_ids))
-        batched_eval_data = eval_data.batch(args.train_batch_size)
+        batched_eval_data = eval_data.batch(args.eval_batch_size)
 
         loss_metric = tf.keras.metrics.Mean()
         epoch_bar = master_bar(range(1))
@@ -462,15 +495,19 @@ def main():
                         for j,m in enumerate(label):
                             if j == 0:
                                 continue
-                            elif label_ids[i][j] == len(label_map):
+                            elif label_ids[i][j].numpy() == len(label_map):
                                 y_true.append(temp_1)
                                 y_pred.append(temp_2)
                                 break
                             else:
                                 temp_1.append(label_map[label_ids[i][j].numpy()])
-                                temp_2.append(label_map.get(logits[i][j].numpy(),'O'))
-            report = classification_report(y_true, y_pred,digits=4)
-            logger.info("\n%s", report)        
+                                temp_2.append(label_map[logits[i][j].numpy()])
+        report = classification_report(y_true, y_pred,digits=4)       
+        output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
+        with open(output_eval_file, "w") as writer:
+            logger.info("***** Eval results *****")
+            logger.info("\n%s", report)
+            writer.write(report)
 
 if __name__ == "__main__":
     main()

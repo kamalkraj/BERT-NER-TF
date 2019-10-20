@@ -474,7 +474,7 @@ def main():
 
         eval_data = tf.data.Dataset.zip(
             (all_input_ids, all_input_mask, all_segment_ids, all_valid_ids, all_label_ids))
-        batched_eval_data = eval_data.batch(args.train_batch_size)
+        batched_eval_data = eval_data.batch(args.eval_batch_size)
 
         loss_metric = tf.keras.metrics.Mean()
         epoch_bar = master_bar(range(1))
@@ -495,19 +495,19 @@ def main():
                         for j,m in enumerate(label):
                             if j == 0:
                                 continue
-                            elif label_ids[i][j] == len(label_map):
+                            elif label_ids[i][j].numpy() == len(label_map):
                                 y_true.append(temp_1)
                                 y_pred.append(temp_2)
                                 break
                             else:
                                 temp_1.append(label_map[label_ids[i][j].numpy()])
-                                temp_2.append(label_map.get(logits[i][j].numpy(),'O'))
-            report = classification_report(y_true, y_pred,digits=4)       
-            output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
-            with open(output_eval_file, "w") as writer:
-                logger.info("***** Eval results *****")
-                logger.info("\n%s", report)
-                writer.write(report)
+                                temp_2.append(label_map[logits[i][j].numpy()])
+        report = classification_report(y_true, y_pred,digits=4)       
+        output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
+        with open(output_eval_file, "w") as writer:
+            logger.info("***** Eval results *****")
+            logger.info("\n%s", report)
+            writer.write(report)
 
 if __name__ == "__main__":
     main()

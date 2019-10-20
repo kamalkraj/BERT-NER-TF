@@ -292,6 +292,14 @@ def main():
                         help="Weight deay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float,
                         help="Epsilon for Adam optimizer.")
+    # training stratergy arguments
+    parser.add_argument("--multi_gpu",
+                        action='store_true',
+                        help="Set this flag to enable multi-gpu training using MirroredStrategy")
+    parser.add_argument("--gpus",default='0',type=str,
+                        help="Comma separated list of gpus devices."
+                              "For Single gpu pass the gpu id.Default '0' GPU"
+                              "For Multi gpu not specified all the available gpus will be used")
 
     args = parser.parse_args()
 
@@ -325,10 +333,10 @@ def main():
                                     warmup_steps=warmup_steps)
         optimizer = AdamWeightDecay(
             learning_rate=learning_rate_fn,
-            weight_decay_rate=0.01,
+            weight_decay_rate=args.weight_decay,
             beta_1=0.9,
             beta_2=0.999,
-            epsilon=1e-6,
+            epsilon=args.adam_epsilon,
             exclude_from_weight_decay=['layer_norm', 'bias'])
 
         ner = BertNer(args.bert_model, tf.float32, num_labels, args.max_seq_length)
@@ -390,6 +398,11 @@ def main():
         shutil.copyfile(os.path.join(args.bert_model,"vocab.txt"),os.path.join(args.output_dir,"vocab.txt"))
         # copy bert config to output_dir
         shutil.copyfile(os.path.join(args.bert_model,"bert_config.json"),os.path.join(args.output_dir,"bert_config.json"))
+        # save label_map and max_seq_length of trained model
+        model_config = {"bert_model":args.bert_model,"do_lower":args.do_lower_case,
+                        "max_seq_length":args.max_seq_length,"num_labels":num_labels,
+                        "label_map":label_map}
+        json.dump(model_config,open(os.path.join(args.output_dir,"model_config.json"),"w"))
         
 
     if args.do_eval:

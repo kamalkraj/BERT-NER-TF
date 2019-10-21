@@ -19,6 +19,8 @@ Train model using Python and TensorFlow 2.0
 
 - [bert-large-cased](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/cased_L-24_H-1024_A-16.tar.gz) unzip into `bert-large-cased`
 
+code for pre-trained bert from [tensorflow-offical-models](https://github.com/tensorflow/models/tree/master/official/nlp) 
+
 # Run
 
 ## Single GPU

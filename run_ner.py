@@ -19,6 +19,8 @@ from model import BertNer
 from optimization import AdamWeightDecay, WarmUp
 from tokenization import FullTokenizer
 
+tf.config.optimizer.set_jit(True)
+
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)

@@ -3,9 +3,26 @@ from __future__ import absolute_import, division, print_function
 import os
 
 import tensorflow as tf
+from numba import jit
 
-from bert_modeling import BertConfig,BertModel
+from bert_modeling import BertConfig, BertModel
 from utils import tf_utils
+import numpy as np
+
+# @jit(nopython=False)
+def bert_feature_slicing(sequence_output:np.array,valid_mask:np.array):
+    valid_output = []
+    for i in range(sequence_output.shape[0]):
+        r = 0
+        temp = []
+        for j in range(sequence_output.shape[1]):
+            if valid_mask[i][j] == 1:
+                temp.append(sequence_output[i][j])
+            else:
+                r += 1
+        temp.extend( r * [np.zeros_like(sequence_output[i][j])] ) 
+        valid_output.append(temp)
+    return valid_output
 
 
 class BertNer(tf.keras.Model):
@@ -49,7 +66,6 @@ class BertNer(tf.keras.Model):
             rate=bert_config.hidden_dropout_prob)
         self.classifier = tf.keras.layers.Dense(
             num_labels, kernel_initializer=initializer, activation='softmax',name='output', dtype=float_type)
-    
 
     def call(self, input_word_ids,input_mask=None,input_type_ids=None,valid_mask=None, **kwargs):
         sequence_output = self.bert([input_word_ids, input_mask, input_type_ids],**kwargs)
@@ -59,12 +75,12 @@ class BertNer(tf.keras.Model):
             temp = []
             for j in range(sequence_output.shape[1]):
                 if valid_mask[i][j] == 1:
-                    temp = temp + [sequence_output[i][j]]
+                    temp.append(sequence_output[i][j])
                 else:
                     r += 1
-            temp = temp + r * [tf.zeros_like(sequence_output[i][j])]
-            valid_output = valid_output + temp
-        valid_output = tf.reshape(tf.stack(valid_output),sequence_output.shape)
+            temp.extend( r * [np.zeros_like(sequence_output[i][j])] ) 
+            valid_output.append(temp)
+        valid_output = tf.stack(valid_output)
         sequence_output = self.dropout(
             valid_output, training=kwargs.get('training', False))
         logits = self.classifier(sequence_output)

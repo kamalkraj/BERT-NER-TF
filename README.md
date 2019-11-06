@@ -4,6 +4,8 @@ Use google BERT to do CoNLL-2003 NER !
 
 Train model using Python and TensorFlow 2.0
 
+[ALBERT-TF2.0](https://github.com/kamalkraj/ALBERT-TF2.0)
+
 [BERT-SQuAD](https://github.com/kamalkraj/BERT-SQuAD)
 
 [BERT-NER-Pytorch](https://github.com/kamalkraj/BERT-NER)

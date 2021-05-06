@@ -5,6 +5,6 @@ seqeval==0.0.5
 nltk==3.4.5
 # for rest api
 Flask==1.1.1
-Flask-Cors==3.0.8
+Flask-Cors==3.0.9
 # progress bar
 fastprogress==0.1.21

@@ -1,4 +1,4 @@
-tensorflow-gpu==2.0
+tensorflow-gpu==2.5.1
 # metrics
 seqeval==0.0.5
 # tokeniztion

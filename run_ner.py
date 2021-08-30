@@ -153,17 +153,15 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         labels = []
         valid = []
         label_mask = []
+        start_position = 1
         for i, word in enumerate(textlist):
             token = tokenizer.tokenize(word)
             tokens.extend(token)
             label_1 = labellist[i]
-            for m in range(len(token)):
-                if m == 0:
-                    labels.append(label_1)
-                    valid.append(1)
-                    label_mask.append(True)
-                else:
-                    valid.append(0)
+            labels.append(label_1)
+            valid.append(start_position)
+            start_position += len(token)
+            label_mask.append(True)
         if len(tokens) >= max_seq_length - 1:
             tokens = tokens[0:(max_seq_length - 2)]
             labels = labels[0:(max_seq_length - 2)]
@@ -174,7 +172,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         label_ids = []
         ntokens.append("[CLS]")
         segment_ids.append(0)
-        valid.insert(0, 1)
+        valid.insert(0, 0)
         label_mask.insert(0, True)
         label_ids.append(label_map["[CLS]"])
         for i, token in enumerate(tokens):
@@ -184,7 +182,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
                 label_ids.append(label_map[labels[i]])
         ntokens.append("[SEP]")
         segment_ids.append(0)
-        valid.append(1)
+        valid.append(valid[-1]+1)
         label_mask.append(True)
         label_ids.append(label_map["[SEP]"])
         input_ids = tokenizer.convert_tokens_to_ids(ntokens)
@@ -195,11 +193,12 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
             input_mask.append(0)
             segment_ids.append(0)
             label_ids.append(0)
-            valid.append(1)
             label_mask.append(False)
         while len(label_ids) < max_seq_length:
             label_ids.append(0)
             label_mask.append(False)
+        while len(valid) < max_seq_length:
+            valid.append(0)
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
@@ -315,10 +314,10 @@ def main():
         raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
-    
+
     if args.do_train:
         tokenizer = FullTokenizer(os.path.join(args.bert_model, "vocab.txt"), args.do_lower_case)
-    
+
     if args.multi_gpu:
         if len(args.gpus.split(',')) == 1:
             strategy = tf.distribute.MirroredStrategy()
@@ -367,18 +366,18 @@ def main():
         logger.info("  Num steps = %d", num_train_optimization_steps)
 
         all_input_ids = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.input_ids for f in train_features]))
+            np.asarray([f.input_ids for f in train_features],dtype=np.int32))
         all_input_mask = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.input_mask for f in train_features]))
+            np.asarray([f.input_mask for f in train_features],dtype=np.int32))
         all_segment_ids = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.segment_ids for f in train_features]))
+            np.asarray([f.segment_ids for f in train_features],dtype=np.int32))
         all_valid_ids = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.valid_ids for f in train_features]))
+            np.asarray([f.valid_ids for f in train_features],dtype=np.int32))
         all_label_mask = tf.data.Dataset.from_tensor_slices(
             np.asarray([f.label_mask for f in train_features]))
 
         all_label_ids = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.label_id for f in train_features]))
+            np.asarray([f.label_id for f in eval_features],dtype=np.int32))
 
         # Dataset using tf.data
         train_data = tf.data.Dataset.zip(
@@ -424,8 +423,8 @@ def main():
                     loss_metric(loss)
                     epoch_bar.child.comment = f'loss : {loss_metric.result()}'
             loss_metric.reset_states()
-        
-        # model weight save 
+
+        # model weight save
         ner.save_weights(os.path.join(args.output_dir,"model.h5"))
         # copy vocab to output_dir
         shutil.copyfile(os.path.join(args.bert_model,"vocab.txt"),os.path.join(args.output_dir,"vocab.txt"))
@@ -436,7 +435,7 @@ def main():
                         "max_seq_length":args.max_seq_length,"num_labels":num_labels,
                         "label_map":label_map}
         json.dump(model_config,open(os.path.join(args.output_dir,"model_config.json"),"w"),indent=4)
-        
+
 
     if args.do_eval:
         # load tokenizer
@@ -444,7 +443,7 @@ def main():
         # model build hack : fix
         config = json.load(open(os.path.join(args.output_dir,"bert_config.json")))
         ner = BertNer(config, tf.float32, num_labels, args.max_seq_length)
-        ids = tf.ones((1,128),dtype=tf.int64)
+        ids = tf.ones((1,128),dtype=tf.int32)
         _ = ner(ids,ids,ids,ids, training=False)
         ner.load_weights(os.path.join(args.output_dir,"model.h5"))
 
@@ -453,7 +452,7 @@ def main():
             eval_examples = processor.get_dev_examples(args.data_dir)
         elif args.eval_on == "test":
             eval_examples = processor.get_test_examples(args.data_dir)
-        
+
         eval_features = convert_examples_to_features(
             eval_examples, label_list, args.max_seq_length, tokenizer)
         logger.info("***** Running evalution *****")
@@ -461,16 +460,16 @@ def main():
         logger.info("  Batch size = %d", args.eval_batch_size)
 
         all_input_ids = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.input_ids for f in eval_features]))
+            np.asarray([f.input_ids for f in eval_features],dtype=np.int32))
         all_input_mask = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.input_mask for f in eval_features]))
+            np.asarray([f.input_mask for f in eval_features],dtype=np.int32))
         all_segment_ids = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.segment_ids for f in eval_features]))
+            np.asarray([f.segment_ids for f in eval_features],dtype=np.int32))
         all_valid_ids = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.valid_ids for f in eval_features]))
+            np.asarray([f.valid_ids for f in eval_features],dtype=np.int32))
 
         all_label_ids = tf.data.Dataset.from_tensor_slices(
-            np.asarray([f.label_id for f in eval_features]))
+            np.asarray([f.label_id for f in eval_features],dtype=np.int32))
 
         eval_data = tf.data.Dataset.zip(
             (all_input_ids, all_input_mask, all_segment_ids, all_valid_ids, all_label_ids))
@@ -502,7 +501,7 @@ def main():
                             else:
                                 temp_1.append(label_map[label_ids[i][j].numpy()])
                                 temp_2.append(label_map[logits[i][j].numpy()])
-        report = classification_report(y_true, y_pred,digits=4)       
+        report = classification_report(y_true, y_pred,digits=4)
         output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results *****")

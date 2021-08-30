@@ -187,3 +187,19 @@ def assert_rank(tensor, expected_rank, name=None):
         "For the tensor `%s`, the actual tensor rank `%d` (shape = %s) is not "
         "equal to the expected tensor rank `%s`" %
         (name, actual_rank, str(tensor.shape), str(expected_rank)))
+
+
+def gather_positions(sequence, positions):
+    """Gathers the vectors at the specific positions over a minibatch.
+    Args:
+      sequence: [batch_size, seq_length, depth] tensor of values
+      positions: A [batch_size, n_positions] tensor of indices
+    Returns: A [batch_size, n_positions, depth] tensor of the values at the indices
+    """
+    shape = get_shape_list(sequence, expected_rank=[2, 3])
+    B, L, D = shape
+    position_shift = tf.expand_dims(L * tf.range(B), -1)
+    flat_positions = tf.reshape(positions + position_shift, [-1])
+    flat_sequence = tf.reshape(sequence, [B * L, D])
+    gathered = tf.gather(flat_sequence, flat_positions)
+    return tf.reshape(gathered, [B, -1, D])

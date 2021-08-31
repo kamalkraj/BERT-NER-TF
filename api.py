@@ -13,6 +13,9 @@ def predict():
     text = request.json["text"]
     try:
         out = model.predict(text)
+        # Float32 is not json serializable #13
+        for item in out:
+            item['confidence'] = str(item['confidence'])
         return jsonify({"result":out})
     except Exception as e:
         print(e)
